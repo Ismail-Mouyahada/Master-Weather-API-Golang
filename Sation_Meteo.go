@@ -63,144 +63,44 @@ func dateFormat(t string) string {
 	return strings.Split(strings.Replace(t, "T", " ", 1), ".")[0]
 }
 
-func ASCIIWeatherState(abbr string) ([][]string, string) {
-	var w [][]string
-	var msg string = ""
-	switch abbr {
-	case "sn":
-		w = [][]string{
-			[]string{"*", " ", "*", "*", "*"},
-			[]string{"*", "*", " ", "*", " "},
-			[]string{" ", "*", "*", " ", "*"},
-			[]string{" ", "*", " ", "*", " "},
-			[]string{"*", " ", " ", " ", " "},
-		}
-	case "sl":
-		w = [][]string{
-			[]string{" ", "*", " ", " ", " "},
-			[]string{" ", " ", " ", " ", "*"},
-			[]string{" ", " ", " ", " ", " "},
-			[]string{" ", "*", "*", "*", " "},
-			[]string{"*", "*", "*", "*", "*"},
-		}
-	case "h":
-		w = [][]string{
-			[]string{" ", " ", "^", " ", " "},
-			[]string{" ", "/", "|", "\\", " "},
-			[]string{"/", " ", "o", " ", "\\"},
-			[]string{" ", " ", "", " ", " "},
-			[]string{"", " ", " ", " ", " "},
-		}
-		msg = "ATTENTION GRELE"
-	case "t":
-		w = [][]string{
-			[]string{" ", " ", "/", " ", " "},
-			[]string{" ", " ", "/", " ", " "},
-			[]string{" ", "/", " ", " ", " "},
-			[]string{" ", " ", "/", " ", " "},
-			[]string{" ", "/", "", " ", " "},
-		}
-		msg = "ATTENTION ORAGE"
-	case "hr":
-		w = [][]string{
-			[]string{" ", "´", "´", "´", " "},
-			[]string{" ", "´", "´", "´", " "},
-			[]string{" ", "´", "´", "´", " "},
-			[]string{" ", "´", "´", "´", " "},
-			[]string{" ", "´", "´", "´", " "},
-		}
-	case "lr":
-		w = [][]string{
-			[]string{" ", " ", " ", " ", " "},
-			[]string{" ", " ", " ", "´", "´"},
-			[]string{" ", " ", "´", "´", "´"},
-			[]string{" ", "´", "´", "´", " "},
-			[]string{" ", "´", "´", " ", " "},
-		}
-
-	case "s":
-		w = [][]string{
-			[]string{"'", " ", "'", " ", "'"},
-			[]string{" ", "'", " ", "'", " "},
-			[]string{"'", " ", "'", " ", "'"},
-			[]string{" ", "'", " ", "'", " "},
-			[]string{"'", " ", "'", " ", "'"},
-		}
-	case "hc":
-		w = [][]string{
-			[]string{" ", "#", "#", " ", " "},
-			[]string{"#", "#", "#", "#", " "},
-			[]string{" ", "#", "#", "#", "#"},
-			[]string{" ", " ", "#", "#", "#"},
-			[]string{" ", " ", " ", " ", " "},
-		}
-	case "lc":
-		w = [][]string{
-			[]string{" ", "#", "#", " ", " "},
-			[]string{" ", "#", "#", "#", " "},
-			[]string{" ", " ", "#", "#", " "},
-			[]string{" ", " ", " ", " ", " "},
-			[]string{" ", " ", " ", " ", " "},
-		}
-	case "c":
-		w = [][]string{
-			[]string{"\\", " ", "|", " ", "/"},
-			[]string{" ", "´", "-", "`", " "},
-			[]string{"-", "(", "o", ")", "-"},
-			[]string{" ", "`", "-", "´", " "},
-			[]string{"/", " ", "|", " ", "\\"},
-		}
+func fetchWeatherData() (*Weather, error) {
+	res, err := http.Get("https://www.metaweather.com/api/location/615702/")
+	if err != nil {
+		return nil, fmt.Errorf("The HTTP request failed with error %s", err)
 	}
-	return w, msg
+	defer res.Body.Close()
+
+	data, _ := ioutil.ReadAll(res.Body)
+
+	w := &Weather{}
+	jsonErr := json.Unmarshal(data, &w)
+	if jsonErr != nil {
+		return nil, jsonErr
+	}
+
+	return w, nil
 }
 
-func renderWeather(w *Weather) {
-
-	fmt.Println(`Bonjour ! Voici le temps qu'il fait à`, w.City)
-
-	abbr := w.Meteo[1].Abbr
-	s, msg := ASCIIWeatherState(abbr)
-	for i := 0; i < len(s); i++ {
-		fmt.Printf("\n")
-		fmt.Printf("%s", strings.Join(s[i], ""))
-
-		fmt.Printf("     ")
-		switch i {
-		case 0:
-			fmt.Printf("La température est de %g degrés.", math.Round(w.Meteo[1].Temp))
-		case 1:
-			fmt.Printf("Météo actuelle : %s", weather(abbr))
-		case 2:
-			fmt.Printf("Vitesse du vent : %g km/h", mphtokmh(w.Meteo[1].WindSpeed))
-		case 3:
-			fmt.Printf("Humidité : %g%%", w.Meteo[1].Humidity)
-		}
-
-	}
-	if msg != "" {
-		fmt.Printf("\n%s\n", msg)
-
+func weatherHandler(w http.ResponseWriter, r *http.Request) {
+	weatherData, err := fetchWeatherData()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 
-	fmt.Println("\nDernière mise à jour :", dateFormat(w.Meteo[1].Updated))
+	jsonData, err := json.Marshal(weatherData)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(jsonData)
 }
 
 func main() {
-	res, err := http.Get("https://www.metaweather.com/api/location/615702/")
-	if err != nil {
-		fmt.Printf("The HTTP request failed with error %s\n", err)
-	} else {
+	http.HandleFunc("/weather", weatherHandler)
 
-		data, _ := ioutil.ReadAll(res.Body)
-
-		w1 := &Weather{}
-		jsonErr := json.Unmarshal([]byte(data), &w1)
-		if jsonErr != nil {
-			log.Fatal(jsonErr)
-		}
-
-		renderWeather(w1)
-
-	}
-
+	fmt.Println("Server started at :8080")
+	log.Fatal(http.ListenAndServe(":8080", nil))
 }
