@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Weather Station</title>
+</head>
+<body>
+    <h1>Weather Station</h1>
+    <div id="weather"></div>
+
+    <script>
+        async function fetchWeather() {
+            try {
+                const response = await fetch('http://localhost:8080/weather');
+                const data = await response.json();
+
+                const weatherDiv = document.getElementById('weather');
+                weatherDiv.innerHTML = `
+                    <h2>${data.City}</h2>
+                    <p>Température: ${data.Meteo[0].Temp.toFixed(2)} °C</p>
+                    <p>État: ${data.Meteo[0].Abbr}</p>
+                    <p>Vitesse du vent: ${(data.Meteo[0].WindSpeed * 1.60934).toFixed(2)} km/h</p>
+                    <p>Humidité: ${data.Meteo[0].Humidity} %</p>
+                    <p>Dernière mise à jour: ${new Date(data.Meteo[0].Updated).toLocaleString()}</p>
+                `;
+            } catch (error) {
+                console.error('Error fetching weather data:', error);
+            }
+        }
+
+        fetchWeather();
+    </script>
+</body>
+</html>
