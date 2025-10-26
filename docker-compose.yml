@@ -1,285 +1,201 @@
-Absolument ! Voici un exemple de configuration `docker-compose.yml` pour un projet Go, incluant une base pour la production et une configuration d'override pour le développement.
+Absolument ! Voici un fichier `docker-compose.yml` professionnel et bien commenté pour un projet Go, incluant une configuration optimisée pour le développement.
 
-Pour que cela fonctionne, vous aurez besoin d'un `Dockerfile` pour votre application Go. Je vais en inclure un exemple simple multi-stage.
-
----
-
-### Structure du Projet (Exemple)
-
-```
-.
-├── docker-compose.yml
-├── docker-compose.override.yml  # Pour le développement
-├── Dockerfile                  # Pour l'application Go
-├── .air.toml                   # Pour le rechargement à chaud en dev (optionnel)
-├── main.go                     # Votre application Go
-├── go.mod
-└── go.sum
-```
+Ce fichier suppose l'existence d'un `Dockerfile` principal pour la production et, idéalement, d'un `Dockerfile.dev` pour le développement qui inclura des outils comme `air` (pour le rechargement à chaud).
 
 ---
-
-### 1. `Dockerfile` (Pour l'application Go)
-
-Ce `Dockerfile` utilise une construction multi-étape pour créer un binaire Go léger.
-
-```dockerfile
-# --- Étape de Construction (Builder Stage) ---
-# Utilise une image Go complète pour la compilation.
-FROM golang:1.22-alpine AS builder
-
-# Définit le répertoire de travail dans le conteneur.
-WORKDIR /app
-
-# Copie les fichiers de dépendances Go et les télécharge.
-# Ceci permet de mettre en cache les modules et d'accélérer les builds si seul le code change.
-COPY go.mod go.sum ./
-RUN go mod download
-
-# Copie le reste du code source de l'application.
-COPY . .
-
-# Construit l'application Go.
-# CGO_ENABLED=0: Désactive la liaison CGO, rendant le binaire complètement statique et plus portable.
-# GOOS=linux: S'assure que le binaire est compilé pour Linux.
-# -a -installsuffix cgo: Force la reconstruction de tous les paquets et ajoute un suffixe.
-# -o main: Nomme le binaire de sortie 'main'.
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main .
-
-# --- Étape d'Exécution (Runtime Stage) ---
-# Utilise une image Alpine minimale pour l'exécution, ce qui réduit considérablement la taille du conteneur final.
-FROM alpine:latest
-
-# Définit le répertoire de travail.
-WORKDIR /app
-
-# Copie le binaire compilé depuis l'étape de construction.
-COPY --from=builder /app/main .
-
-# Expose le port sur lequel l'application Go écoute.
-# (Assurez-vous que votre application Go écoute bien sur ce port, ex: ":8080")
-EXPOSE 8080
-
-# Commande par défaut pour exécuter l'application.
-CMD ["./main"]
-```
-
----
-
-### 2. `docker-compose.yml` (Configuration de Base / Production)
-
-Ce fichier définit les services essentiels et leurs configurations pour un environnement de production.
 
 ```yaml
-# Version de Docker Compose utilisée.
+# docker-compose.yml
+#
+# Ce fichier définit l'ensemble des services nécessaires pour faire fonctionner
+# votre application Go avec Docker Compose. Il inclut des configurations
+# pour la production et pour le développement.
+#
+# Version de la spécification Docker Compose. '3.8' ou plus récent est recommandé
+# pour les fonctionnalités comme les profils de service et les healthchecks.
 version: '3.8'
 
-# Définition des services de l'application.
+# --------------------------------------------------------------------------------------------------
+# SERVICES
+# Définit les différents conteneurs qui composent votre application.
+# --------------------------------------------------------------------------------------------------
 services:
-  # Service pour l'application Go
-  go-app:
+
+  # Service principal de l'application Go
+  # -------------------------------------
+  app:
+    # Build l'image Docker à partir du Dockerfile situé dans le répertoire courant.
+    # Ceci est la configuration par défaut/production.
     build:
-      context: .             # Le contexte de build est le répertoire actuel.
-      dockerfile: Dockerfile # Utilise le Dockerfile situé à la racine.
+      context: .
+      dockerfile: Dockerfile # Assurez-vous d'avoir un Dockerfile à la racine
+    
+    # Mappe les ports du conteneur aux ports de la machine hôte.
+    # Ici, le port 8080 de l'application Go est accessible via le port 8080 de l'hôte.
     ports:
-      # Mappe le port 8080 du conteneur au port 8080 de l'hôte.
-      # Pour la production, vous pourriez envisager un proxy inverse (nginx/Caddy) devant Docker.
-      - "8080:8080"
+      - "8080:8080" # Exemple: Votre application Go écoute probablement sur le port 8080
+
+    # Variables d'environnement pour l'application.
+    # Il est recommandé d'utiliser un fichier .env (voir ci-dessous) pour les valeurs sensibles.
     environment:
-      # Variables d'environnement pour l'application Go.
-      # Celles-ci doivent être lues par votre application Go.
       APP_ENV: production
-      PORT: 8080
-      # Configuration de la base de données PostgreSQL
-      DB_HOST: db            # Le nom du service Docker Compose pour la base de données.
-      DB_PORT: 5432
-      DB_USER: app_user
-      DB_PASSWORD: supersecretpassword
-      DB_NAME: my_go_app_db
-      # Configuration Redis (si utilisée)
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
+      # Exemple de connexion à la base de données PostgreSQL:
+      DATABASE_URL: postgres://user:password@db:5432/mydatabase?sslmode=disable
+      # D'autres variables d'environnement spécifiques à votre application...
+
+    # Définit les dépendances entre les services.
+    # L'application ne démarrera que lorsque le service 'db' sera sain.
     depends_on:
-      # S'assure que les services `db` et `redis` sont démarrés avant `go-app`.
-      # Note: cela ne garantit pas que les services sont "prêts" à accepter des connexions.
-      # Votre application Go doit implémenter une logique de reconnexion.
-      - db
-      - redis # Décommenter si votre application utilise Redis
-    restart: always # Redémarre le conteneur s'il échoue.
+      db:
+        condition: service_healthy # Attend que le healthcheck de la base de données soit réussi
 
-  # Service pour la base de données PostgreSQL
-  db:
-    image: postgres:16-alpine # Utilise l'image PostgreSQL 16 (version alpine pour une taille réduite).
-    environment:
-      POSTGRES_DB: my_go_app_db
-      POSTGRES_USER: app_user
-      POSTGRES_PASSWORD: supersecretpassword
-    volumes:
-      # Monte un volume nommé pour persister les données de la base de données.
-      # Ceci est crucial pour ne pas perdre vos données lorsque le conteneur est recréé.
-      - db_data:/var/lib/postgresql/data
-    restart: always
+    # Politique de redémarrage : le conteneur redémarrera automatiquement
+    # sauf s'il est arrêté explicitement.
+    restart: unless-stopped
+    
+    # Les services peuvent être assignés à des profils. Ce service n'est pas dans un profil,
+    # il sera donc démarré par défaut (ex: `docker-compose up`).
 
-  # Service pour Redis (système de cache, file d'attente, etc.)
-  redis:
-    image: redis:7-alpine # Utilise l'image Redis 7 (version alpine pour une taille réduite).
-    volumes:
-      # Monte un volume nommé pour persister les données de Redis (si AOF ou RDB sont activés).
-      - redis_data:/data
-    restart: always
+  # Service de développement pour l'application Go (avec rechargement à chaud)
+  # --------------------------------------------------------------------------
+  app-dev:
+    # Ce service est désactivé par défaut et doit être lancé avec `--profile dev`.
+    # Exemple: `docker-compose --profile dev up`
+    profiles:
+      - dev
 
-# Définition des volumes nommés.
-# Docker gérera la création et la persistance de ces volumes.
-volumes:
-  db_data: {}
-  redis_data: {} # Décommenter si vous utilisez Redis
-```
+    # Utilise un Dockerfile spécifique pour le développement.
+    # Ce Dockerfile devrait inclure des outils comme 'air' pour le rechargement à chaud.
+    build:
+      context: .
+      dockerfile: Dockerfile.dev # Créez un Dockerfile.dev adapté
+    
+    # Mappe les ports pour le développement, souvent les mêmes que la prod.
+    ports:
+      - "8080:8080"
 
----
-
-### 3. `docker-compose.override.yml` (Configuration pour le Développement)
-
-Ce fichier est utilisé en conjonction avec `docker-compose.yml` pour ajouter ou modifier des configurations spécifiques au développement.
-Il est automatiquement pris en compte par `docker compose up` si présent dans le même répertoire.
-
-```yaml
-# Version de Docker Compose. Doit correspondre à celle du fichier principal.
-version: '3.8'
-
-services:
-  go-app:
-    # Pour le développement, nous voulons monter le code source de l'hôte
-    # afin que les changements soient reflétés immédiatement sans reconstruire l'image.
-    volumes:
-      - .:/app # Monte le répertoire courant de l'hôte dans /app du conteneur.
-      # Vous pourriez vouloir exclure le répertoire des modules Go si vous le gérez différemment
-      # - /app/vendor
-
-    # Remplace la commande par défaut du Dockerfile pour le développement.
-    # Option 1: Utiliser 'go run' pour exécuter l'application directement.
-    # Cela recompile à chaque exécution, mais est simple.
-    # command: go run main.go
-
-    # Option 2: Utiliser un outil de rechargement à chaud comme 'Air'.
-    # Cela nécessite que 'Air' soit installé dans le Dockerfile ou dans le conteneur.
-    # Voir la section ".air.toml" ci-dessous.
-    command: air -c .air.toml # Assurez-vous que 'air' est installé dans l'image de dev.
-
+    # Variables d'environnement spécifiques au développement.
     environment:
       APP_ENV: development
-      # Vous pouvez ajouter d'autres variables spécifiques au développement ici (ex: DEBUG=true)
-      DB_HOST: db
-      DB_PORT: 5432
-      DB_USER: app_user_dev # Utiliser des identifiants différents pour le dev si nécessaire
-      DB_PASSWORD: devpassword
-      DB_NAME: my_go_app_db_dev
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
+      DATABASE_URL: postgres://user:password@db:5432/mydatabase?sslmode=disable
+      # Autres variables pour le dev...
 
+    # Monte le répertoire courant de l'hôte dans le répertoire /app du conteneur.
+    # Cela permet au conteneur de voir les modifications de code en temps réel.
+    volumes:
+      - .:/app
+      # Cache les modules Go pour accélérer les reconstructions/démarrages.
+      - go-mod-cache:/go/pkg/mod
+    
+    # Overrides le CMD/ENTRYPOINT du Dockerfile pour lancer 'air'.
+    # 'air' surveillera les changements de fichiers Go et reconstruira/redémarrera l'application.
+    command: air # Assurez-vous que 'air' est installé dans Dockerfile.dev
+
+    depends_on:
+      db:
+        condition: service_healthy
+
+    # Pas de restart unless-stopped pour le dev, car il est géré manuellement ou par 'air'.
+
+  # Service de base de données PostgreSQL
+  # ------------------------------------
   db:
-    ports:
-      # Expose le port 5432 de la base de données sur l'hôte.
-      # Utile pour se connecter avec des outils externes (ex: DBeaver, pgAdmin) pendant le développement.
-      - "5432:5432"
+    # Utilise une image PostgreSQL officielle. Choisissez une version spécifique (ex: 15-alpine pour une image plus légère).
+    image: postgres:15-alpine
+
+    # Variables d'environnement pour configurer la base de données.
+    # Il est FORTEMENT recommandé d'utiliser un fichier .env (voir ci-dessous) pour ces valeurs en production.
     environment:
-      # On peut utiliser une base de données différente pour le développement.
-      POSTGRES_DB: my_go_app_db_dev
-      POSTGRES_USER: app_user_dev
-      POSTGRES_PASSWORD: devpassword
+      POSTGRES_DB: mydatabase
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password # REMPLACEZ PAR UN MOT DE PASSE SÉCURISÉ OU UTILISEZ UN .ENV
+      PGDATA: /var/lib/postgresql/data/pgdata # Spécifie le répertoire de données
 
-  redis:
+    # Mappe le volume persistant pour les données de la base de données.
+    # Cela garantit que vos données ne sont pas perdues lorsque le conteneur est supprimé.
+    volumes:
+      - db-data:/var/lib/postgresql/data/pgdata # Mappe le volume nommé à l'emplacement des données PG
+    
+    # Expose le port PostgreSQL sur la machine hôte. Utile pour se connecter avec des clients SQL externes.
     ports:
-      # Expose le port 6379 de Redis sur l'hôte pour faciliter le débogage.
-      - "6379:6379"
+      - "5432:5432"
+
+    # Healthcheck pour s'assurer que la base de données est prête à accepter des connexions.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"] # $$ pour échapper $ dans le shell
+      interval: 5s     # Vérifie toutes les 5 secondes
+      timeout: 5s      # Temps maximum pour une vérification
+      retries: 5       # Nombre de tentatives avant de déclarer le service "unhealthy"
+      start_period: 10s # Période initiale pendant laquelle les échecs ne comptent pas pour les rétries
+
+    restart: unless-stopped
+
+# --------------------------------------------------------------------------------------------------
+# VOLUMES
+# Définit les volumes nommés pour la persistance des données.
+# --------------------------------------------------------------------------------------------------
+volumes:
+  db-data: {} # Volume pour les données PostgreSQL
+  go-mod-cache: {} # Volume pour cacher les modules Go (utile en développement)
+
+# --------------------------------------------------------------------------------------------------
+# INSTRUCTIONS D'UTILISATION
+# --------------------------------------------------------------------------------------------------
+# Pour lancer l'application en mode production (ou par défaut) :
+#   docker-compose up -d
+#
+# Pour lancer l'application en mode développement (avec rechargement à chaud) :
+#   docker-compose --profile dev up
+#
+# Pour arrêter tous les services :
+#   docker-compose down
+#
+# Pour arrêter et supprimer les volumes (utile pour repartir à zéro) :
+#   docker-compose down -v
+#
+# --------------------------------------------------------------------------------------------------
+# CONSEILS SUPPLÉMENTAIRES
+# --------------------------------------------------------------------------------------------------
+# 1. Fichier .env :
+#    Créez un fichier `.env` à la racine de votre projet (à côté de docker-compose.yml)
+#    pour gérer vos variables d'environnement sensibles, comme les mots de passe.
+#    Exemple de .env :
+#    POSTGRES_PASSWORD=mon_super_mot_de_passe_secret
+#    DATABASE_URL=postgres://user:${POSTGRES_PASSWORD}@db:5432/mydatabase?sslmode=disable
+#    Docker Compose chargera automatiquement ce fichier.
+
+# 2. Dockerfile.dev :
+#    Un exemple simple de Dockerfile.dev pour le rechargement à chaud avec 'air' :
+#    ```dockerfile
+#    # Dockerfile.dev
+#    FROM golang:1.22-alpine # Utilisez une version Go spécifique et Alpine pour la légèreté
+#
+#    WORKDIR /app
+#
+#    # Installe 'air' pour le rechargement à chaud
+#    RUN go install github.com/cosmtrek/air@latest
+#
+#    # Copie les fichiers go.mod et go.sum pour gérer les dépendances en cache
+#    COPY go.mod go.sum ./
+#    RUN go mod download
+#
+#    # Le code source sera monté via un volume dans docker-compose.yml
+#    # Le CMD sera surchargé par docker-compose.yml pour lancer 'air'
+#    ```
+
+# 3. .dockerignore :
+#    Assurez-vous d'avoir un fichier `.dockerignore` pour exclure les fichiers inutiles
+#    de votre contexte de build Docker, comme `node_modules`, `vendor/` (si non géré par Go modules),
+#    `.git/`, `.env`, etc.
+#    Exemple :
+#    ```
+#    # .dockerignore
+#    .git/
+#    .vscode/
+#    .env
+#    .DS_Store
+#    *.swp
+#    Dockerfile.dev
+#    vendor/ # Si vous utilisez Go modules, cela est souvent inclus dans le build
+#    ```
 ```
-
----
-
-### 4. `.air.toml` (Pour le rechargement à chaud en développement - Optionnel)
-
-Pour utiliser le rechargement à chaud avec `air`, vous devez l'installer dans votre conteneur de développement. La manière la plus simple est de l'ajouter à votre `Dockerfile` *avant* la construction pour le stage `builder` ou même un stage dédié pour le développement.
-
-Modifiez votre `Dockerfile` pour inclure `air` si vous choisissez cette option (ajoutez après `go mod download`):
-
-```dockerfile
-# ... (dans le stage builder) ...
-COPY go.mod go.sum ./
-RUN go mod download
-
-# Installer Air pour le développement
-RUN go install github.com/cosmtrek/air@latest
-# ... (le reste du Dockerfile) ...
-```
-
-Puis, créez un fichier `.air.toml` à la racine de votre projet :
-
-```toml
-root = "."
-tmp_dir = "tmp"
-
-[build]
-# Commande de construction pour Go.
-cmd = "go build -o ./tmp/main ."
-# Répertoires à surveiller pour les changements.
-include_dir = ["."]
-# Répertoires à ignorer pour les changements.
-exclude_dir = ["tmp", "vendor", "node_modules"]
-# Extensions de fichiers à surveiller.
-include_ext = ["go", "tpl", "tmpl", "html", "yaml", "yml", "json"]
-
-[run]
-# Commande d'exécution après une construction réussie.
-cmd = "./tmp/main"
-# Fichiers à ignorer pour le redémarrage.
-exclude_file = []
-
-[log]
-# Niveau de log.
-time_format = "15:04:05"
-
-[color]
-app = ""
-build = "yellow"
-main = "magenta"
-runner = "green"
-watcher = "cyan"
-
-[misc]
-# Effacer le terminal avant chaque exécution.
-clear_terminal = true
-```
-
----
-
-### Instructions d'Utilisation
-
-1.  **Créez les fichiers** : Copiez le `Dockerfile`, `docker-compose.yml`, `docker-compose.override.yml` et `.air.toml` (si utilisé) dans le répertoire racine de votre projet Go.
-2.  **Adaptez votre code Go** :
-    *   Votre application Go doit lire les variables d'environnement (`DB_HOST`, `DB_USER`, `PORT`, etc.) pour se connecter aux services.
-    *   Assurez-vous qu'elle écoute sur le port `8080` (ou celui que vous avez configuré).
-3.  **Démarrer en Développement** :
-    ```bash
-    docker compose up --build # ou `docker-compose up --build` si vous n'avez pas la v2
-    ```
-    Cela va construire les images (si nécessaire) et démarrer tous les services. Grâce à `docker-compose.override.yml`, votre code Go local sera monté dans le conteneur, et si vous utilisez `air`, les changements déclencheront un redémarrage automatique.
-4.  **Démarrer en Production (sans override)** :
-    ```bash
-    # Assurez-vous que docker-compose.override.yml n'est pas présent ou renommé.
-    # Ou spécifiez explicitement le fichier principal :
-    docker compose -f docker-compose.yml up --build -d
-    ```
-    L'option `-d` détachera les conteneurs du terminal.
-5.  **Arrêter les services** :
-    ```bash
-    docker compose down
-    ```
-    Ceci arrêtera et supprimera les conteneurs et les réseaux par défaut, mais *pas les volumes nommés* (`db_data`, `redis_data`), préservant ainsi vos données.
-6.  **Arrêter et supprimer tout (y compris les volumes)** :
-    ```bash
-    docker compose down --volumes
-    ```
-    Utilisez cette commande avec prudence, car elle supprimera toutes les données persistantes de votre base de données et Redis.
-
----
-
-Cette configuration vous offre une base solide pour développer et déployer votre application Go avec Docker Compose, en tenant compte des besoins spécifiques du développement (rapidité d'itération) et de la production (stabilité, persistance, légèreté).
